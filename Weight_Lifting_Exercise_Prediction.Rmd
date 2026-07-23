@@ -1,0 +1,126 @@
+---
+title: "Predicting Barbell-Lift Execution from Wearable Sensors"
+author: "Ahmed"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    self_contained: true
+    toc: true
+    toc_depth: 2
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 7, fig.height = 4.2)
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+if (!file.exists("data/pml-training.csv")) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(train_url, "data/pml-training.csv", mode = "wb")
+}
+if (!file.exists("data/pml-testing.csv")) {
+  download.file(test_url, "data/pml-testing.csv", mode = "wb")
+}
+if (!file.exists("results/model_results.rds")) source("train_model.R")
+res <- readRDS("results/model_results.rds")
+train_raw <- read.csv("data/pml-training.csv",
+  na.strings = c("NA", "", "#DIV/0!"), check.names = TRUE)
+test_raw <- read.csv("data/pml-testing.csv",
+  na.strings = c("NA", "", "#DIV/0!"), check.names = TRUE)
+```
+
+## Executive summary
+
+I built a bagged classification-tree ensemble to predict the five exercise
+classes from belt, arm, forearm, and dumbbell accelerometers. After removing
+identifiers, timestamps, window fields, and variables with at least 5% missing
+values, 52 sensor predictors remained. Stratified five-fold cross-validation
+produced **`r sprintf("%.2f%%", 100 * res$cv_overall)` accuracy**, so the
+estimated out-of-sample error is **`r sprintf("%.2f%%", 100 * (1-res$cv_overall))`**.
+The final ensemble was trained on all 19,622 observations and generated the 20
+quiz predictions listed below.
+
+## Data preparation and exploratory analysis
+
+The response `classe` records correct execution (A) and four specific errors
+(B--E). The seven administrative variables were excluded because they describe
+the observation or collection window rather than body motion and could cause
+spurious participant/time leakage. The original data also contain summary
+variables that are almost entirely missing; columns with 5% or more missing
+values were removed. The retained predictors are complete in both datasets, so
+imputation was unnecessary.
+
+```{r class-balance, echo=FALSE}
+class_n <- table(train_raw$classe)
+barplot(class_n, col = "#377eb8", border = NA,
+        xlab = "Exercise class", ylab = "Training observations",
+        main = "Outcome classes are moderately balanced")
+```
+
+Class A is most common, but every class has more than 3,000 observations.
+Stratification therefore preserves the class distribution in every validation
+fold and prevents the accuracy estimate from being dominated by class A.
+
+## Model and cross-validation
+
+Classification trees accommodate nonlinear relationships and interactions
+without requiring sensor scaling. A single deep tree is unstable, so I fitted
+an ensemble of 35 bootstrap trees per validation fold. Each tree used a random
+subset of 35 of the 52 predictors; majority voting reduced variance and supplied
+additional diversity. The tree controls were `cp = 0`, `minsplit = 5`,
+`minbucket = 2`, and `maxdepth = 30`.
+
+Five stratified folds were created once with seed 20260723. For each fold, the
+model was trained on the other four folds and evaluated only on the held-out
+observations. This makes every observation an out-of-fold prediction and avoids
+using the 20 quiz cases for model selection.
+
+```{r cv-results, echo=FALSE}
+barplot(100 * res$cv_accuracy, names.arg = paste("Fold", 1:5),
+        ylim = c(98, 100), col = "#4daf4a", border = NA,
+        ylab = "Accuracy (%)", main = "Five-fold cross-validation accuracy")
+abline(h = 100 * res$cv_overall, lty = 2, col = "#e41a1c", lwd = 2)
+```
+
+Fold accuracies ranged from `r sprintf("%.2f%%",100*min(res$cv_accuracy))` to
+`r sprintf("%.2f%%",100*max(res$cv_accuracy))`. The pooled confusion matrix is:
+
+```{r confusion}
+res$cv_confusion
+```
+
+The pooled cross-validated error,
+`r sprintf("%.2f%%", 100*(1-res$cv_overall))`, is the expected out-of-sample
+error. It is preferable to training accuracy because each prediction was made
+by a model that did not see that observation. Remaining error may reflect
+similar motion patterns between incorrect techniques and participant-specific
+variation.
+
+## Final model and quiz predictions
+
+After validation, I trained 75 bootstrap trees on all training observations
+using the same preprocessing and settings. The resulting predictions are:
+
+```{r predictions, echo=FALSE}
+prediction_table <- data.frame(
+  problem_id = test_raw$problem_id,
+  prediction = as.character(res$predictions)
+)
+knitr::kable(prediction_table, align = c("c", "c"))
+```
+
+The comma-separated answer file and 20 one-answer text files are included in
+the repository. The complete reusable fitting code is in `train_model.R`.
+
+## Reproducibility
+
+```{r session-info}
+sessionInfo()
+```
+
+## Data citation
+
+Velloso, E., Bulling, A., Gellersen, H., Ugulino, W., and Fuks, H. (2013).
+*Qualitative Activity Recognition of Weight Lifting Exercises*. Proceedings of
+the 4th Augmented Human International Conference.

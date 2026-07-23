@@ -1,0 +1,5 @@
+data/
+results/model_results.rds
+*.Rproj
+.Rhistory
+.RData
